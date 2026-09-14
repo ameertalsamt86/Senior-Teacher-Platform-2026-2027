@@ -465,7 +465,7 @@ def render_auth():
             st.rerun()
 
 def get_current_page():
-    allowed={"Home","Semester Plan","Demo Lessons","Supervisory Visits","Professional Development","Peer Visits","Educational Initiatives","Professional Learning Community","Files & Archive","Files","Calendar"}
+    allowed={"Home","Semester Plan","Demo Lessons","Supervisory Visits","Professional Development","Peer Visits","Educational Initiatives","Professional Learning Community","Files & Archive","Files"}
     page=st.query_params.get("page","Home")
     return page if page in allowed else "Home"
 
@@ -680,7 +680,7 @@ def admin_global_comments():
 
 def page_home(school_year, semester):
     st.markdown(f'<img class="hero-image" src="data:image/png;base64,{HERO_BANNER_B64}">',unsafe_allow_html=True)
-    cards=[("📋","Semester Plan","Annual and term plans<br>and schedules","#2B5E8B"),("📖","Demo Lessons","Sample lessons and<br>teaching resources","#3E8E91"),("♧","Supervisory Visits","Observations and<br>follow-up notes","#9156A4"),("↗","Professional Development","Training and workshops","#C89A4B"),("♧","Peer Visits","Collaboration and sharing<br>of best practices","#D96C6C"),("💡","Educational Initiatives","School initiatives and<br>projects","#2E8CB2"),("♧","Professional Learning<br>Community","PLC meetings and activities","#75A34A"),("▤","Files & Archive","Important documents<br>and resources","#607E9D"),("📅","Calendar","This week plan<br>and follow-up","#567A8A")]
+    cards=[("📋","Semester Plan","Annual and term plans<br>and schedules","#2B5E8B"),("📖","Demo Lessons","Sample lessons and<br>teaching resources","#3E8E91"),("♧","Supervisory Visits","Observations and<br>follow-up notes","#9156A4"),("↗","Professional Development","Training and workshops","#C89A4B"),("♧","Peer Visits","Collaboration and sharing<br>of best practices","#D96C6C"),("💡","Educational Initiatives","School initiatives and<br>projects","#2E8CB2"),("♧","Professional Learning<br>Community","PLC meetings and activities","#75A34A"),("▤","Files & Archive","Important documents<br>and resources","#607E9D"),("📅","This week plan<br>and follow-up","#567A8A")]
     html='<div class="home-grid">'
     for icon,title,desc,bg in cards:
         target=title.replace('<br>',' ')
@@ -1130,50 +1130,6 @@ def page_semester_plan(school_year, semester):
 
     admin_record_management("semester_events",school_year,semester,["event_date","event_title","event_type","notes"],title="Manage Semester Plan Events",date_columns=["event_date"],select_options={"event_type":["Event","Activity","Occasion","Assessment","Holiday","Other"]})
 
-def page_calendar(school_year, semester):
-    st.subheader("This Week Plan")
-
-    if can_edit():
-        with st.form("calendar_form", clear_on_submit=True):
-            week_item = st.text_input("What will be implemented this week?")
-            notes = st.text_area("Notes")
-            uploaded_files = st.file_uploader(
-                "Attachments (images, PDF, Word, Excel, PowerPoint, video, etc.)",
-                accept_multiple_files=True, key="calendar_upload"
-            )
-
-            submitted = st.form_submit_button("Save", type="primary")
-            if submitted:
-                if not week_item.strip():
-                    st.error("This field is required.")
-                else:
-                    attachments = upload_many_to_storage(uploaded_files, school_year, semester)
-                    if attachments is not None:
-                        saved = insert_record("weekly_calendar", {
-                            "week_item": week_item.strip(),
-                            "notes": pack_text_with_attachments(notes, attachments),
-                            "school_year": school_year,
-                            "semester": semester,
-                        })
-                        if saved:
-                            st.success("Record saved successfully.")
-                            st.rerun()
-
-    else:
-        viewer_notice()
-
-    df = fetch_df("weekly_calendar", {"school_year": school_year, "semester": semester},
-             "week_item, notes", "id", True)
-    if df.empty and not load_failed(df):
-        st.info("No weekly plans found.")
-    else:
-        for _, row in df.iterrows():
-            with st.container(border=True):
-                st.markdown(f"**{row.get('week_item','')}**")
-                render_text_and_attachments(row.get("notes"))
-
-    admin_record_management("weekly_calendar",school_year,semester,["week_item","notes"],title="Manage Weekly Plan")
-
 
 # =========================
 # Admin record management
@@ -1271,7 +1227,7 @@ def main():
     semester=st.session_state.get("semester",SEMESTERS[0])
     semester=portal_toolbar(semester,page)
     st.session_state.semester=semester
-    routes={"Home":page_home,"Semester Plan":page_semester_plan,"Demo Lessons":page_demo_lessons,"Supervisory Visits":page_supervisory_visits,"Professional Development":page_professional_development,"Peer Visits":page_peer_visits,"Educational Initiatives":page_educational_initiatives,"Professional Learning Community":page_plc,"Files & Archive":page_files,"Files":page_files,"Calendar":page_calendar}
+    routes={"Home":page_home,"Semester Plan":page_semester_plan,"Demo Lessons":page_demo_lessons,"Supervisory Visits":page_supervisory_visits,"Professional Development":page_professional_development,"Peer Visits":page_peer_visits,"Educational Initiatives":page_educational_initiatives,"Professional Learning Community":page_plc,"Files & Archive":page_files,"Files":page_files}
     routes[page](school_year,semester)
     st.markdown('<div class="portal-footer"><span>📖</span><span class="quote">✦ &nbsp; ✧ &nbsp; ✦</span><span>🌿 &nbsp; ◇ &nbsp; 🌿</span></div>',unsafe_allow_html=True)
 
