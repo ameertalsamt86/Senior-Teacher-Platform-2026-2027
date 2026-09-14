@@ -680,7 +680,7 @@ def admin_global_comments():
 
 def page_home(school_year, semester):
     st.markdown(f'<img class="hero-image" src="data:image/png;base64,{HERO_BANNER_B64}">',unsafe_allow_html=True)
-    cards=[("📋","Semester Plan","Annual and term plans<br>and schedules","#2B5E8B"),("📖","Demo Lessons","Sample lessons and<br>teaching resources","#3E8E91"),("♧","Supervisory Visits","Observations and<br>follow-up notes","#9156A4"),("↗","Professional Development","Training and workshops","#C89A4B"),("♧","Peer Visits","Collaboration and sharing<br>of best practices","#D96C6C"),("💡","Educational Initiatives","School initiatives and<br>projects","#2E8CB2"),("♧","Professional Learning<br>Community","PLC meetings and activities","#75A34A"),("▤","Files & Archive","Important documents<br>and resources","#607E9D"),("📅","This week plan<br>and follow-up","#567A8A")]
+    cards=[("📋","Semester Plan","Annual and term plans<br>and schedules","#2B5E8B"),("📖","Demo Lessons","Sample lessons and<br>teaching resources","#3E8E91"),("♧","Supervisory Visits","Observations and<br>follow-up notes","#9156A4"),("↗","Professional Development","Training and workshops","#C89A4B"),("♧","Peer Visits","Collaboration and sharing<br>of best practices","#D96C6C"),("💡","Educational Initiatives","School initiatives and<br>projects","#2E8CB2"),("♧","Professional Learning<br>Community","PLC meetings and activities","#75A34A"),("▤","Files & Archive","Important documents<br>and resources","#607E9D")]
     html='<div class="home-grid">'
     for icon,title,desc,bg in cards:
         target=title.replace('<br>',' ')
