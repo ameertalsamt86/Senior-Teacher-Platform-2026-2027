@@ -6,9 +6,6 @@ import time
 import json
 import mimetypes
 import uuid
-import json
-import mimetypes
-import uuid
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
@@ -152,8 +149,18 @@ def fetch_df(table, filters=None, columns="*", order_by=None, descending=False):
         query=supabase.table(table).select(columns)
         for key,value in (filters or {}).items(): query=query.eq(key,value)
         if order_by: query=query.order(order_by, desc=descending)
-        return pd.DataFrame(query.execute().data or [])
-    except Exception as exc: _db_error("load the records", exc); return pd.DataFrame()
+        df = pd.DataFrame(query.execute().data or [])
+        df.attrs["load_failed"] = False
+        return df
+    except Exception as exc:
+        _db_error("load the records", exc)
+        df = pd.DataFrame()
+        df.attrs["load_failed"] = True
+        return df
+
+
+def load_failed(df):
+    return bool(getattr(df, "attrs", {}).get("load_failed", False))
 
 _MIME_BY_EXT = {
     "doc": "application/msword",
@@ -187,21 +194,6 @@ def _file_mime_type(filename, browser_type=None):
     ext = PurePosixPath(str(filename)).suffix.lower().lstrip(".")
     return _MIME_BY_EXT.get(ext) or browser_type or mimetypes.guess_type(str(filename))[0] or "application/octet-stream"
 
-_MIME_BY_EXT = {
-    "doc": "application/msword", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "xls": "application/vnd.ms-excel", "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "ppt": "application/vnd.ms-powerpoint", "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "pdf": "application/pdf", "txt": "text/plain", "csv": "text/csv", "zip": "application/zip",
-    "rar": "application/vnd.rar", "7z": "application/x-7z-compressed", "mp4": "video/mp4",
-    "webm": "video/webm", "mov": "video/quicktime", "m4v": "video/x-m4v", "mp3": "audio/mpeg",
-    "wav": "audio/wav", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-    "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp", "svg": "image/svg+xml",
-}
-
-def _file_mime_type(filename, browser_type=None):
-    ext = PurePosixPath(str(filename)).suffix.lower().lstrip(".")
-    return _MIME_BY_EXT.get(ext) or browser_type or mimetypes.guess_type(str(filename))[0] or "application/octet-stream"
-
 def upload_to_storage(uploaded_file, school_year, semester):
     """Upload using an ASCII-only object key; preserve original filename/type in metadata."""
     if uploaded_file is None:
@@ -224,14 +216,62 @@ def upload_to_storage(uploaded_file, school_year, semester):
         _db_error(f"upload '{getattr(uploaded_file, 'name', 'attachment')}'", exc)
         return None
 
+def _storage_object_path_from_url(url):
+    """Return our school-files object path from a Supabase public URL, otherwise None."""
+    raw = str(url or "").split("?", 1)[0]
+    markers = [
+        "/storage/v1/object/public/school-files/",
+        "/storage/v1/object/sign/school-files/",
+    ]
+    for marker in markers:
+        if marker in raw:
+            return raw.split(marker, 1)[1]
+    return None
+
+
+def _delete_storage_records(value):
+    """Best-effort cleanup for files owned by the school-files bucket."""
+    if value is None:
+        return
+    raw = str(value or "")
+    if ATTACHMENT_TEXT_MARKER in raw:
+        _, raw = raw.split(ATTACHMENT_TEXT_MARKER, 1)
+    records = _parse_attachment_records(raw)
+    paths = []
+    for record in records:
+        path = _storage_object_path_from_url(record.get("url"))
+        if path:
+            paths.append(path)
+    if not paths:
+        return
+    try:
+        storage_supabase.storage.from_("school-files").remove(paths)
+    except Exception:
+        # Database deletion must not fail only because storage cleanup failed.
+        pass
+
+
 def upload_many_to_storage(uploaded_files, school_year, semester):
-    """Upload multiple files and store URL + original filename/type as JSON metadata."""
+    """Upload all selected files atomically from the UI perspective.
+
+    Returns JSON metadata on success, an empty string when no files were selected,
+    and None if any selected file failed. Successfully uploaded files are cleaned
+    up when another file in the same batch fails.
+    """
+    files = list(uploaded_files or [])
+    if not files:
+        return ""
+
     records = []
-    for uploaded_file in (uploaded_files or []):
+    for uploaded_file in files:
         record = upload_to_storage(uploaded_file, school_year, semester)
-        if record:
-            records.append(record)
-    return json.dumps(records, ensure_ascii=False) if records else ""
+        if not record:
+            for uploaded_record in records:
+                _delete_storage_records(json.dumps([uploaded_record], ensure_ascii=False))
+            st.error("One or more attachments could not be uploaded. The record was not saved.")
+            return None
+        records.append(record)
+    return json.dumps(records, ensure_ascii=False)
 
 def _attachment_type(url):
     clean = str(url).split("?")[0].lower()
@@ -263,20 +303,6 @@ def _parse_attachment_records(value):
         pass
     return [{"url": x.strip()} for x in raw.replace(";", "\n").splitlines() if x.strip()]
 
-def _parse_attachment_records(value):
-    """Read new JSON metadata and remain compatible with old URL-only values."""
-    if value is None or not str(value).strip():
-        return []
-    raw = str(value).strip()
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            parsed = [parsed]
-        if isinstance(parsed, list) and all(isinstance(x, dict) and x.get("url") for x in parsed):
-            return parsed
-    except Exception:
-        pass
-    return [{"url": x.strip()} for x in raw.replace(";", "\n").splitlines() if x.strip()]
 
 ATTACHMENT_TEXT_MARKER = "\n\n__PORTAL_ATTACHMENTS__::"
 
@@ -364,24 +390,27 @@ def render_header():
 
 
 def _make_admin_token():
-    # Stateless signed session token. It survives Streamlit reruns and
-    # navigation because it is carried in the URL without exposing the password.
+    # Signed short-lived session token: one login remains valid while navigating.
     expires = int(time.time()) + ADMIN_SESSION_TTL
-    payload = str(expires)
+    nonce = secrets.token_urlsafe(18)
+    payload = f"{expires}:{nonce}"
     signature = hmac.new(ADMIN_SESSION_SECRET, payload.encode("utf-8"), digestmod="sha256").hexdigest()
     return f"{payload}.{signature}"
 
 def _valid_admin_token(token):
     if not token or "." not in str(token):
         return False
-    expires_text, signature = str(token).split(".", 1)
+    payload, signature = str(token).split(".", 1)
+    if ":" not in payload:
+        return False
+    expires_text, _nonce = payload.split(":", 1)
     try:
         expires = int(expires_text)
     except ValueError:
         return False
     if expires <= int(time.time()):
         return False
-    expected = hmac.new(ADMIN_SESSION_SECRET, expires_text.encode("utf-8"), digestmod="sha256").hexdigest()
+    expected = hmac.new(ADMIN_SESSION_SECRET, payload.encode("utf-8"), digestmod="sha256").hexdigest()
     return hmac.compare_digest(signature, expected)
 
 def render_auth():
@@ -437,13 +466,15 @@ def navigate_to(page):
     st.rerun()
 
 def portal_toolbar(school_year, semester, page):
-    c1,c2,c3=st.columns([1.25,1.25,2.2])
+    c1,c2,c3,c4=st.columns([1.25,1.25,1.25,2.2])
     with c1:
-        semester=st.selectbox("Semester",SEMESTERS,index=SEMESTERS.index(semester),key="top_semester",label_visibility="collapsed")
+        school_year=st.selectbox("School Year",SCHOOL_YEARS,index=SCHOOL_YEARS.index(school_year) if school_year in SCHOOL_YEARS else 1,key="top_school_year",label_visibility="collapsed")
     with c2:
+        semester=st.selectbox("Semester",SEMESTERS,index=SEMESTERS.index(semester) if semester in SEMESTERS else 0,key="top_semester",label_visibility="collapsed")
+    with c3:
         if page!="Home":
             if st.button("⌂  Back to Home",use_container_width=True): navigate_to("Home")
-    with c3:
+    with c4:
         render_auth()
     return school_year,semester
 
@@ -460,7 +491,7 @@ def viewer_notice():
 # Pages
 # =========================
 def show_table(df):
-    if df.empty:
+    if df.empty and not load_failed(df):
         st.info("No records found.")
         return
     st.dataframe(df, use_container_width=True, hide_index=True)
@@ -532,7 +563,7 @@ def render_platform_comments(school_year, semester):
             comments = comments.sort_values("created_at", ascending=False)
         comments = comments.head(20)
 
-    if comments.empty:
+    if comments.empty and not load_failed(comments):
         st.info("No comments yet. Be the first to share your feedback!")
     else:
         for _, row in comments.iterrows():
@@ -563,7 +594,8 @@ def admin_global_comments():
 
     df = fetch_df("site_comments")
     if df.empty:
-        st.caption("No comments available to manage.")
+        if not load_failed(df):
+            st.caption("No comments available to manage.")
         return
 
     if "id" not in df.columns:
@@ -594,7 +626,8 @@ def admin_global_comments():
             for c in display_columns
             if row.get(c) is not None and str(row.get(c)).strip()
         ]
-        options[" — ".join(parts)[:160] if parts else f"Record #{row['id']}"] = int(row["id"])
+        summary = " — ".join(parts)[:150] if parts else "Comment"
+        options[f"#{int(row['id'])} — {summary}"] = int(row["id"])
 
     label = st.selectbox(
         "Select a comment",
@@ -637,7 +670,7 @@ def admin_global_comments():
 
 def page_home(school_year, semester):
     st.markdown(f'<img class="hero-image" src="data:image/png;base64,{HERO_BANNER_B64}">',unsafe_allow_html=True)
-    cards=[("📋","Semester Plan","Annual and term plans<br>and schedules","#2B5E8B"),("📖","Demo Lessons","Sample lessons and<br>teaching resources","#3E8E91"),("♧","Supervisory Visits","Observations and<br>follow-up notes","#9156A4"),("↗","Professional Development","Training and workshops","#C89A4B"),("♧","Peer Visits","Collaboration and sharing<br>of best practices","#D96C6C"),("💡","Educational Initiatives","School initiatives and<br>projects","#2E8CB2"),("♧","Professional Learning<br>Community","PLC meetings and activities","#75A34A"),("▤","Files & Archive","Important documents<br>and resources","#607E9D")]
+    cards=[("📋","Semester Plan","Annual and term plans<br>and schedules","#2B5E8B"),("📖","Demo Lessons","Sample lessons and<br>teaching resources","#3E8E91"),("♧","Supervisory Visits","Observations and<br>follow-up notes","#9156A4"),("↗","Professional Development","Training and workshops","#C89A4B"),("♧","Peer Visits","Collaboration and sharing<br>of best practices","#D96C6C"),("💡","Educational Initiatives","School initiatives and<br>projects","#2E8CB2"),("♧","Professional Learning<br>Community","PLC meetings and activities","#75A34A"),("▤","Files & Archive","Important documents<br>and resources","#607E9D"),("📅","Calendar","This week plan<br>and follow-up","#567A8A")]
     html='<div class="home-grid">'
     for icon,title,desc,bg in cards:
         target=title.replace('<br>',' ')
@@ -667,21 +700,23 @@ def page_demo_lessons(school_year, semester):
                     st.error("Teacher Name is required.")
                 else:
                     attachments = upload_many_to_storage(uploaded_files, school_year, semester)
-                    insert_record("demo_lessons", {
-                        "teacher_name": teacher_name.strip(),
-                        "implementation_date": implementation_date.isoformat(),
-                        "class_name": class_name.strip(),
-                        "attachment": attachments,
-                        "school_year": school_year,
-                        "semester": semester,
-                    })
-                    st.success("Record saved successfully.")
-                    st.rerun()
+                    if attachments is not None:
+                        saved = insert_record("demo_lessons", {
+                            "teacher_name": teacher_name.strip(),
+                            "implementation_date": implementation_date.isoformat(),
+                            "class_name": class_name.strip(),
+                            "attachment": attachments,
+                            "school_year": school_year,
+                            "semester": semester,
+                        })
+                        if saved:
+                            st.success("Record saved successfully.")
+                            st.rerun()
     else:
         viewer_notice()
     df = fetch_df("demo_lessons", {"school_year": school_year, "semester": semester},
         "teacher_name, implementation_date, class_name, attachment", "implementation_date", True)
-    if df.empty:
+    if df.empty and not load_failed(df):
         st.info("No demo lessons found.")
     else:
         for _, row in df.iterrows():
@@ -708,18 +743,20 @@ def page_supervisory_visits(school_year, semester):
                     st.error("Teacher Name is required.")
                 else:
                     attachments = upload_many_to_storage(uploaded_files, school_year, semester)
-                    insert_record("supervisory_visits", {
-                        "teacher_name": teacher_name.strip(), "visit_date": visit_date.isoformat(),
-                        "class_name": class_name.strip(), "attachment": attachments,
-                        "school_year": school_year, "semester": semester,
-                    })
-                    st.success("Record saved successfully.")
-                    st.rerun()
+                    if attachments is not None:
+                        saved = insert_record("supervisory_visits", {
+                            "teacher_name": teacher_name.strip(), "visit_date": visit_date.isoformat(),
+                            "class_name": class_name.strip(), "attachment": attachments,
+                            "school_year": school_year, "semester": semester,
+                        })
+                        if saved:
+                            st.success("Record saved successfully.")
+                            st.rerun()
     else:
         viewer_notice()
     df = fetch_df("supervisory_visits", {"school_year": school_year, "semester": semester},
         "teacher_name, visit_date, class_name, attachment", "visit_date", True)
-    if df.empty:
+    if df.empty and not load_failed(df):
         st.info("No supervisory visits found.")
     else:
         for _, row in df.iterrows():
@@ -746,18 +783,20 @@ def page_professional_development(school_year, semester):
                     st.error("Implementing Teacher is required.")
                 else:
                     attachments = upload_many_to_storage(uploaded_files, school_year, semester)
-                    insert_record("professional_development", {
-                        "teacher_name": teacher_name.strip(), "title": title.strip(),
-                        "activity_date": activity_date.isoformat(), "attachment": attachments,
-                        "school_year": school_year, "semester": semester,
-                    })
-                    st.success("Record saved successfully.")
-                    st.rerun()
+                    if attachments is not None:
+                        saved = insert_record("professional_development", {
+                            "teacher_name": teacher_name.strip(), "title": title.strip(),
+                            "activity_date": activity_date.isoformat(), "attachment": attachments,
+                            "school_year": school_year, "semester": semester,
+                        })
+                        if saved:
+                            st.success("Record saved successfully.")
+                            st.rerun()
     else:
         viewer_notice()
     df = fetch_df("professional_development", {"school_year": school_year, "semester": semester},
         "teacher_name, title, activity_date, attachment", "activity_date", True)
-    if df.empty:
+    if df.empty and not load_failed(df):
         st.info("No professional development records found.")
     else:
         for _, row in df.iterrows():
@@ -790,23 +829,25 @@ def page_peer_visits(school_year, semester):
                     st.error("Both teacher names are required.")
                 else:
                     attachments = upload_many_to_storage(uploaded_files, school_year, semester)
-                    insert_record("peer_visits", {
-                        "visiting_teacher": visiting_teacher.strip(),
-                        "visited_teacher": visited_teacher.strip(),
-                        "visit_date": visit_date.isoformat(),
-                        "notes": pack_text_with_attachments(notes, attachments),
-                        "school_year": school_year,
-                        "semester": semester,
-                    })
-                    st.success("Record saved successfully.")
-                    st.rerun()
+                    if attachments is not None:
+                        saved = insert_record("peer_visits", {
+                            "visiting_teacher": visiting_teacher.strip(),
+                            "visited_teacher": visited_teacher.strip(),
+                            "visit_date": visit_date.isoformat(),
+                            "notes": pack_text_with_attachments(notes, attachments),
+                            "school_year": school_year,
+                            "semester": semester,
+                        })
+                        if saved:
+                            st.success("Record saved successfully.")
+                            st.rerun()
 
     else:
         viewer_notice()
 
     df = fetch_df("peer_visits", {"school_year": school_year, "semester": semester},
              "visiting_teacher, visited_teacher, visit_date, notes", "visit_date", True)
-    if df.empty:
+    if df.empty and not load_failed(df):
         st.info("No peer visits found.")
     else:
         for _, row in df.iterrows():
@@ -832,18 +873,20 @@ def page_educational_initiatives(school_year, semester):
                     st.error("Initiative Title is required.")
                 else:
                     attachments = upload_many_to_storage(uploaded_files, school_year, semester)
-                    insert_record("educational_initiatives", {
-                        "initiative_title": initiative_title.strip(), "time_period": time_period.strip(),
-                        "results": results.strip(), "attachments": attachments,
-                        "school_year": school_year, "semester": semester,
-                    })
-                    st.success("Record saved successfully.")
-                    st.rerun()
+                    if attachments is not None:
+                        saved = insert_record("educational_initiatives", {
+                            "initiative_title": initiative_title.strip(), "time_period": time_period.strip(),
+                            "results": results.strip(), "attachments": attachments,
+                            "school_year": school_year, "semester": semester,
+                        })
+                        if saved:
+                            st.success("Record saved successfully.")
+                            st.rerun()
     else:
         viewer_notice()
     df = fetch_df("educational_initiatives", {"school_year": school_year, "semester": semester},
         "initiative_title, time_period, results, attachments", "id", True)
-    if df.empty:
+    if df.empty and not load_failed(df):
         st.info("No educational initiatives found.")
     else:
         for _, row in df.iterrows():
@@ -874,22 +917,24 @@ def page_plc(school_year, semester):
                     st.error("Course Title is required.")
                 else:
                     attachments = upload_many_to_storage(uploaded_files, school_year, semester)
-                    insert_record("plc_records", {
-                        "course_title": course_title.strip(),
-                        "time_period": time_period.strip(),
-                        "recommendations": pack_text_with_attachments(recommendations, attachments),
-                        "school_year": school_year,
-                        "semester": semester,
-                    })
-                    st.success("Record saved successfully.")
-                    st.rerun()
+                    if attachments is not None:
+                        saved = insert_record("plc_records", {
+                            "course_title": course_title.strip(),
+                            "time_period": time_period.strip(),
+                            "recommendations": pack_text_with_attachments(recommendations, attachments),
+                            "school_year": school_year,
+                            "semester": semester,
+                        })
+                        if saved:
+                            st.success("Record saved successfully.")
+                            st.rerun()
 
     else:
         viewer_notice()
 
     df = fetch_df("plc_records", {"school_year": school_year, "semester": semester},
              "course_title, time_period, recommendations", "id", True)
-    if df.empty:
+    if df.empty and not load_failed(df):
         st.info("No Professional Learning Community records found.")
     else:
         for _, row in df.iterrows():
@@ -924,23 +969,22 @@ def page_files(school_year, semester):
                     st.error("File / Resource Name is required.")
                 else:
                     uploaded_urls = upload_many_to_storage(uploaded_files, school_year, semester)
-                    stored_path = uploaded_urls or file_path.strip()
-                    if uploaded_files and not uploaded_urls:
-                        st.error("The attachment upload failed. The record was not saved.")
-                    else:
-                        insert_record("files_archive", {
+                    if uploaded_urls is not None:
+                        stored_path = uploaded_urls or file_path.strip()
+                        saved = insert_record("files_archive", {
                             "file_name": file_name.strip(), "category": category.strip(),
                             "file_path": stored_path, "notes": notes.strip(),
                             "school_year": school_year, "semester": semester,
                         })
-                        st.success("File record saved successfully.")
-                        st.rerun()
+                        if saved:
+                            st.success("File record saved successfully.")
+                            st.rerun()
     else:
         viewer_notice()
 
     df = fetch_df("files_archive", {"school_year": school_year, "semester": semester},
         "id,file_name,category,file_path,notes", "id", True)
-    if df.empty:
+    if df.empty and not load_failed(df):
         st.info("No archived files yet.")
     else:
         for _, row in df.iterrows():
@@ -992,21 +1036,22 @@ def page_semester_plan(school_year, semester):
                 if start_date > end_date:
                     st.error("The semester start date must be before the end date.")
                 else:
-                    upsert_record("semester_settings", {
+                    saved = upsert_record("semester_settings", {
                         "school_year": school_year,
                         "semester": semester,
                         "start_date": start_date.isoformat(),
                         "end_date": end_date.isoformat(),
                     }, "school_year,semester")
-                    st.success("Semester dates saved.")
-                    st.rerun()
+                    if saved:
+                        st.success("Semester dates saved.")
+                        st.rerun()
     else:
         viewer_notice()
 
     # Refresh saved dates after a possible update.
     settings = fetch_df("semester_settings", {"school_year": school_year, "semester": semester}, "start_date, end_date", "id", True)
 
-    if settings.empty:
+    if settings.empty and not load_failed(settings):
         st.info("No semester dates have been set yet.")
         current_start = None
         current_end = None
@@ -1044,21 +1089,24 @@ def page_semester_plan(school_year, semester):
                 elif current_start and current_end and not (current_start <= event_date <= current_end):
                     st.error("The event date must be within the semester period.")
                 else:
-                    insert_record("semester_events", {
-                        "event_date": event_date.isoformat(),
-                        "event_title": event_title.strip(),
-                        "event_type": event_type,
-                        "notes": pack_text_with_attachments(notes, upload_many_to_storage(uploaded_files, school_year, semester)),
-                        "school_year": school_year,
-                        "semester": semester,
-                    })
-                    st.success("Added to the Semester Plan.")
-                    st.rerun()
+                    attachments = upload_many_to_storage(uploaded_files, school_year, semester)
+                    if attachments is not None:
+                        saved = insert_record("semester_events", {
+                            "event_date": event_date.isoformat(),
+                            "event_title": event_title.strip(),
+                            "event_type": event_type,
+                            "notes": pack_text_with_attachments(notes, attachments),
+                            "school_year": school_year,
+                            "semester": semester,
+                        })
+                        if saved:
+                            st.success("Added to the Semester Plan.")
+                            st.rerun()
 
     df = fetch_df("semester_events", {"school_year": school_year, "semester": semester},
-             "id, event_date, event_title, event_type, notes", "event_date", False).rename(columns={"event_date":"Date", "event_title":"Event / Activity / Occasion", "event_type":"Type", "notes":"Notes"})
+             "id,event_date,event_title,event_type,notes", "event_date", False)
 
-    if df.empty:
+    if df.empty and not load_failed(df):
         st.info("No events have been added to this semester yet.")
     else:
         for _, row in df.iterrows():
@@ -1087,21 +1135,23 @@ def page_calendar(school_year, semester):
                     st.error("This field is required.")
                 else:
                     attachments = upload_many_to_storage(uploaded_files, school_year, semester)
-                    insert_record("weekly_calendar", {
-                        "week_item": week_item.strip(),
-                        "notes": pack_text_with_attachments(notes, attachments),
-                        "school_year": school_year,
-                        "semester": semester,
-                    })
-                    st.success("Record saved successfully.")
-                    st.rerun()
+                    if attachments is not None:
+                        saved = insert_record("weekly_calendar", {
+                            "week_item": week_item.strip(),
+                            "notes": pack_text_with_attachments(notes, attachments),
+                            "school_year": school_year,
+                            "semester": semester,
+                        })
+                        if saved:
+                            st.success("Record saved successfully.")
+                            st.rerun()
 
     else:
         viewer_notice()
 
     df = fetch_df("weekly_calendar", {"school_year": school_year, "semester": semester},
              "week_item, notes", "id", True)
-    if df.empty:
+    if df.empty and not load_failed(df):
         st.info("No weekly plans found.")
     else:
         for _, row in df.iterrows():
@@ -1116,38 +1166,89 @@ def page_calendar(school_year, semester):
 # Admin record management
 # =========================
 def admin_record_management(table,school_year,semester,columns,title="Manage Records",date_columns=None,select_options=None):
-    if not can_edit(): return
-    date_columns=set(date_columns or []); select_options=select_options or {}
-    st.markdown("---"); st.subheader(f"⚙️ {title}")
+    if not can_edit():
+        return
+    date_columns=set(date_columns or [])
+    select_options=select_options or {}
+    attachment_columns={"attachment","attachments","file_path"}
+    st.markdown("---")
+    st.subheader(f"⚙️ {title}")
     df=fetch_df(table,{"school_year":school_year,"semester":semester},order_by="id",descending=True)
-    if df.empty: st.caption("No records available to manage."); return
+    if df.empty:
+        if not load_failed(df):
+            st.caption("No records available to manage.")
+        return
+
     options={}
     for _,row in df.iterrows():
-        parts=[str(row.get(c,"")) for c in columns if row.get(c) is not None and str(row.get(c)).strip()]
-        options[" — ".join(parts) if parts else f"Record #{row['id']}"]=int(row["id"])
-    label=st.selectbox("Select a record",list(options),key=f"manage_select_{table}"); selected_id=options[label]; selected=df[df.id==selected_id].iloc[0]
-    with st.form(f"edit_form_{table}"):
+        parts=[]
+        for c in columns:
+            if c not in row or row.get(c) is None or not str(row.get(c)).strip():
+                continue
+            if c in attachment_columns:
+                continue
+            clean_value, _blob = unpack_text_with_attachments(row.get(c))
+            if clean_value.strip():
+                parts.append(clean_value.strip())
+        label_text=" — ".join(parts)[:140] if parts else "Record"
+        options[f"#{int(row['id'])} — {label_text}"]=int(row["id"])
+
+    label=st.selectbox("Select a record",list(options),key=f"manage_select_{table}")
+    selected_id=options[label]
+    selected=df[df.id==selected_id].iloc[0]
+
+    with st.form(f"edit_form_{table}_{selected_id}"):
         edited={}
         for col in columns:
-            if col not in df.columns: continue
-            lab=col.replace("_"," ").title(); value=selected[col]
+            if col not in df.columns:
+                continue
+            lab=col.replace("_"," ").title()
+            value=selected[col]
             if col in date_columns:
-                try: parsed=date.fromisoformat(str(value)) if value else date.today()
-                except ValueError: parsed=date.today()
+                try:
+                    parsed=date.fromisoformat(str(value)) if value else date.today()
+                except (ValueError, TypeError):
+                    parsed=date.today()
                 edited[col]=st.date_input(lab,value=parsed,key=f"edit_{table}_{selected_id}_{col}").isoformat()
             elif col in select_options:
-                opts=select_options[col]; cur=str(value) if value is not None else opts[0]
+                opts=select_options[col]
+                cur=str(value) if value is not None else opts[0]
                 edited[col]=st.selectbox(lab,opts,index=opts.index(cur) if cur in opts else 0,key=f"edit_{table}_{selected_id}_{col}")
             elif col in {"notes","results","recommendations"}:
                 clean_value, attachment_blob = unpack_text_with_attachments(value)
                 edited_text = st.text_area(lab, value=clean_value, key=f"edit_{table}_{selected_id}_{col}")
                 edited[col] = pack_text_with_attachments(edited_text, attachment_blob)
-            else: edited[col]=st.text_input(lab,value="" if value is None else str(value),key=f"edit_{table}_{selected_id}_{col}")
+            elif col in attachment_columns:
+                # Preserve attachment metadata; editing raw JSON/URLs here can corrupt stored files.
+                edited[col] = value
+                records = _parse_attachment_records(value)
+                if records:
+                    st.caption(f"{lab}: {len(records)} attachment(s) preserved. Replace files from the main form if needed.")
+                elif value:
+                    st.caption(f"{lab}: existing external link/value preserved.")
+            else:
+                edited[col]=st.text_input(lab,value="" if value is None else str(value),key=f"edit_{table}_{selected_id}_{col}")
+
         c1,c2=st.columns(2)
-        with c1: save=st.form_submit_button("💾 Save Changes",use_container_width=True)
-        with c2: delete=st.form_submit_button("🗑️ Delete Record",use_container_width=True)
-    if save and update_record(table,selected_id,edited): st.success("Changes saved successfully."); st.rerun()
-    if delete and delete_record(table,selected_id): st.success("Record deleted successfully."); st.rerun()
+        with c1:
+            save=st.form_submit_button("💾 Save Changes",use_container_width=True)
+        with c2:
+            delete=st.form_submit_button("🗑️ Delete Record",use_container_width=True)
+
+    if save:
+        saved = update_record(table,selected_id,edited)
+        if saved:
+            st.success("Changes saved successfully.")
+            st.rerun()
+
+    if delete:
+        deleted = delete_record(table,selected_id)
+        if deleted:
+            for col in columns:
+                if col in selected.index:
+                    _delete_storage_records(selected[col])
+            st.success("Record deleted successfully.")
+            st.rerun()
 
 def main():
     apply_custom_style(); init_db()
