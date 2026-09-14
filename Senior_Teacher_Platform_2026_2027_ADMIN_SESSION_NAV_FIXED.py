@@ -24,8 +24,20 @@ st.set_page_config(
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_SECRET_KEY"]
-STORAGE_SUPABASE_URL = st.secrets["STORAGE_SUPABASE_URL"]
-STORAGE_SUPABASE_KEY = st.secrets["STORAGE_SUPABASE_KEY"]
+
+# Storage normally lives in the same Supabase project.
+# If separate Storage credentials are not configured in Streamlit secrets,
+# safely reuse the main Supabase URL/key instead of crashing with KeyError.
+STORAGE_SUPABASE_URL = (
+    st.secrets["STORAGE_SUPABASE_URL"]
+    if "STORAGE_SUPABASE_URL" in st.secrets
+    else SUPABASE_URL
+)
+STORAGE_SUPABASE_KEY = (
+    st.secrets["STORAGE_SUPABASE_KEY"]
+    if "STORAGE_SUPABASE_KEY" in st.secrets
+    else SUPABASE_KEY
+)
 ADMIN_PASSWORD = st.secrets["ADMIN_PASSWORD"]
 
 # Short-lived server-side admin sessions. This lets the admin session survive
