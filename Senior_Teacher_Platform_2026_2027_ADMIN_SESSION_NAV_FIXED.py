@@ -49,7 +49,7 @@ from supabase import create_client
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 storage_supabase = create_client(STORAGE_SUPABASE_URL, STORAGE_SUPABASE_KEY)
 
-SCHOOL_YEARS = ["2025/2026", "2026/2027", "2027/2028"]
+SCHOOL_YEAR = "2026/2027"  # Internal fixed value used by the existing Supabase schema.
 SEMESTERS = ["First Semester", "Second Semester"]
 
 # Embedded visual assets from the approved old interface.
@@ -477,18 +477,16 @@ def navigate_to(page):
         st.query_params["admin_token"] = token
     st.rerun()
 
-def portal_toolbar(school_year, semester, page):
-    c1,c2,c3,c4=st.columns([1.25,1.25,1.25,2.2])
+def portal_toolbar(semester, page):
+    c1,c2,c3=st.columns([1.25,1.25,2.2])
     with c1:
-        school_year=st.selectbox("School Year",SCHOOL_YEARS,index=SCHOOL_YEARS.index(school_year) if school_year in SCHOOL_YEARS else 1,key="top_school_year",label_visibility="collapsed")
-    with c2:
         semester=st.selectbox("Semester",SEMESTERS,index=SEMESTERS.index(semester) if semester in SEMESTERS else 0,key="top_semester",label_visibility="collapsed")
-    with c3:
+    with c2:
         if page!="Home":
             if st.button("⌂  Back to Home",use_container_width=True): navigate_to("Home")
-    with c4:
+    with c3:
         render_auth()
-    return school_year,semester
+    return semester
 
 def can_edit():
     return st.session_state.get("admin_mode", False)
@@ -1013,7 +1011,7 @@ def page_files(school_year, semester):
 
 def page_semester_plan(school_year, semester):
     st.subheader("Semester Plan")
-    st.caption(f"{school_year} · {semester}")
+    st.caption(semester)
 
     settings = fetch_df("semester_settings", {"school_year": school_year, "semester": semester}, "start_date, end_date", "id", True)
 
@@ -1063,7 +1061,10 @@ def page_semester_plan(school_year, semester):
     # Refresh saved dates after a possible update.
     settings = fetch_df("semester_settings", {"school_year": school_year, "semester": semester}, "start_date, end_date", "id", True)
 
-    if settings.empty and not load_failed(settings):
+    if load_failed(settings):
+        current_start = None
+        current_end = None
+    elif settings.empty:
         st.info("No semester dates have been set yet.")
         current_start = None
         current_end = None
@@ -1266,9 +1267,10 @@ def main():
     apply_custom_style(); init_db()
     page=get_current_page()
     render_header()
-    school_year=st.session_state.get("school_year",SCHOOL_YEARS[1]); semester=st.session_state.get("semester",SEMESTERS[0])
-    school_year,semester=portal_toolbar(school_year,semester,page)
-    st.session_state.school_year=school_year; st.session_state.semester=semester
+    school_year=SCHOOL_YEAR
+    semester=st.session_state.get("semester",SEMESTERS[0])
+    semester=portal_toolbar(semester,page)
+    st.session_state.semester=semester
     routes={"Home":page_home,"Semester Plan":page_semester_plan,"Demo Lessons":page_demo_lessons,"Supervisory Visits":page_supervisory_visits,"Professional Development":page_professional_development,"Peer Visits":page_peer_visits,"Educational Initiatives":page_educational_initiatives,"Professional Learning Community":page_plc,"Files & Archive":page_files,"Files":page_files,"Calendar":page_calendar}
     routes[page](school_year,semester)
     st.markdown('<div class="portal-footer"><span>📖</span><span class="quote">✦ &nbsp; ✧ &nbsp; ✦</span><span>🌿 &nbsp; ◇ &nbsp; 🌿</span></div>',unsafe_allow_html=True)
