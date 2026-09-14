@@ -27,6 +27,8 @@ st.set_page_config(
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_SECRET_KEY"]
+STORAGE_SUPABASE_URL = st.secrets["STORAGE_SUPABASE_URL"]
+STORAGE_SUPABASE_KEY = st.secrets["STORAGE_SUPABASE_KEY"]
 ADMIN_PASSWORD = st.secrets["ADMIN_PASSWORD"]
 
 # Short-lived server-side admin sessions. This lets the admin session survive
@@ -36,6 +38,7 @@ ADMIN_SESSION_SECRET = str(ADMIN_PASSWORD).encode("utf-8")
 
 from supabase import create_client
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+storage_supabase = create_client(STORAGE_SUPABASE_URL, STORAGE_SUPABASE_KEY)
 
 SCHOOL_YEARS = ["2025/2026", "2026/2027", "2027/2028"]
 SEMESTERS = ["First Semester", "Second Semester"]
@@ -211,11 +214,11 @@ def upload_to_storage(uploaded_file, school_year, semester):
         mime_type = _file_mime_type(original_name, getattr(uploaded_file, "type", None))
         object_name = f"{uuid.uuid4().hex}{ext}"
         path = f"{year}/{sem}/{object_name}"
-        supabase.storage.from_("school-files").upload(
+        storage_supabase.storage.from_("school-files").upload(
             path, uploaded_file.getvalue(),
             {"content-type": mime_type, "upsert": False}
         )
-        public_url = supabase.storage.from_("school-files").get_public_url(path)
+        public_url = storage_supabase.storage.from_("school-files").get_public_url(path)
         return {"url": str(public_url), "name": original_name, "mime": mime_type, "extension": ext.lstrip(".")}
     except Exception as exc:
         _db_error(f"upload '{getattr(uploaded_file, 'name', 'attachment')}'", exc)
