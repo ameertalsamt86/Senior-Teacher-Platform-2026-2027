@@ -340,7 +340,7 @@ def render_text_and_attachments(value, label="Attachments"):
     render_attachment_links(attachment_blob, label)
 
 def render_attachment_links(value, label="Attachments"):
-    """Show attachments as visible cards, with previews for images/videos/PDFs."""
+    """Show attachments as visible cards, with inline previews for images, videos, PDFs and Office files."""
     records = _parse_attachment_records(value)
     if not records:
         return
@@ -373,9 +373,23 @@ def render_attachment_links(value, label="Attachments"):
                     elif kind == "video":
                         st.video(url)
                     elif kind == "pdf":
-                        st.markdown(f"<iframe src='{url}' width='100%' height='360' style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;'></iframe>", unsafe_allow_html=True)
+                        # PDFs are displayed directly inside the platform.
+                        st.markdown(
+                            f"<iframe src='{url}#toolbar=1&navpanes=0' width='100%' height='520' "
+                            "style='border:1px solid #d9e1e8;border-radius:0 0 14px 14px;background:#fff;'></iframe>",
+                            unsafe_allow_html=True,
+                        )
+                    elif kind == "office":
+                        # Public Word/Excel/PowerPoint files can be rendered inline by Microsoft Office Online.
+                        office_viewer = "https://view.officeapps.live.com/op/embed.aspx?src=" + quote(url, safe="")
+                        st.markdown(
+                            f"<iframe src='{office_viewer}' width='100%' height='520' "
+                            "style='border:1px solid #d9e1e8;border-radius:0 0 14px 14px;background:#fff;' "
+                            "frameborder='0'></iframe>",
+                            unsafe_allow_html=True,
+                        )
                     else:
-                        st.markdown(f"<div class='attachment-file-preview'><div class='attachment-big-icon'>{icon}</div><div>{ext.upper() or 'FILE'}</div><small>File ready to open/share</small></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='attachment-file-preview'><div class='attachment-big-icon'>{icon}</div><div>{ext.upper() or 'FILE'}</div><small>Preview is not available for this file type.</small></div>", unsafe_allow_html=True)
                 except Exception:
                     st.info("Preview is not available for this file type.")
                 if url.startswith(("http://", "https://")):
