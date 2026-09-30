@@ -131,6 +131,25 @@ div[data-testid="stVerticalBlockBorderWrapper"] span {
         color: #173B5B !important;
     }
 }
+
+/* Record paragraphs: independent of Streamlit container wrapper names. */
+.stApp [data-testid="stMarkdown"] [data-testid="stMarkdownContainer"] > p,
+.stApp [data-testid="stMarkdown"] [data-testid="stMarkdownContainer"] > p strong,
+.stApp [data-testid="stMarkdown"] [data-testid="stMarkdownContainer"] > p span,
+.stApp [data-testid="stMarkdown"] [data-testid="stMarkdownContainer"] > p em {
+    color: #173B5B !important;
+    -webkit-text-fill-color: #173B5B !important;
+}
+
+@media (max-width: 900px) {
+.stApp [data-testid="stMarkdown"] [data-testid="stMarkdownContainer"] > p,
+.stApp [data-testid="stMarkdown"] [data-testid="stMarkdownContainer"] > p strong,
+.stApp [data-testid="stMarkdown"] [data-testid="stMarkdownContainer"] > p span,
+.stApp [data-testid="stMarkdown"] [data-testid="stMarkdownContainer"] > p em {
+    color: #173B5B !important;
+    -webkit-text-fill-color: #173B5B !important;
+}
+}
 </style>
         """, unsafe_allow_html=True,
     )
