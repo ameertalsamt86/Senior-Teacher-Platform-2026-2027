@@ -460,6 +460,7 @@ def render_auth():
 def get_current_page():
     allowed={"Home","Semester Plan","Demo Lessons","Supervisory Visits","Professional Development","Peer Visits","Educational Initiatives","Professional Learning Community","Files","Calendar"}
     page=st.query_params.get("page","Home")
+    if page == "Files & Archive": page = "Files"
     return page if page in allowed else "Home"
 
 def navigate_to(page):
@@ -675,6 +676,7 @@ def page_home(school_year, semester):
     html='<div class="home-grid">'
     for icon,title,desc,bg in cards:
         target=title.replace('<br>',' ')
+        if target == 'Files & Archive': target = 'Files'
         admin_token = st.query_params.get("admin_token")
         token_part = f"&admin_token={quote(str(admin_token))}" if admin_token else ""
         html+=f'<a class="home-card-link" href="?page={quote(target)}{token_part}" target="_self"><div class="home-card"><div class="home-card-icon" style="background:{bg}">{icon}</div><h3>{title}</h3><div class="dash"></div><p>{desc}</p><div class="home-card-arrow">→</div></div></a>'
@@ -1149,38 +1151,91 @@ def page_calendar(school_year, semester):
 # =========================
 # Admin record management
 # =========================
+def edit_attachment_controls(blob, key):
+    records = _parse_attachment_records(blob)
+    removed = []
+    if records:
+        render_attachment_links(blob, "Current attachments")
+        st.caption("Existing files stay attached unless selected below. To replace a file, select it and upload its replacement.")
+        for index, item in enumerate(records):
+            name = item.get("name") or str(item.get("url", "")).split("?")[0].rsplit("/", 1)[-1]
+            if st.checkbox(f"Remove from this record: {name}", value=False, key=f"{key}_remove_{index}"):
+                removed.append(index)
+    files = st.file_uploader("Add files / upload replacements", accept_multiple_files=True, key=f"{key}_upload")
+    links = st.text_area("Add external file links (one per line, optional)", key=f"{key}_links")
+    return blob, records, removed, files, links
+
+
+def save_attachment_edits(plan, school_year, semester):
+    blob, records, removed, files, links = plan
+    extra_links = [line.strip() for line in links.splitlines() if line.strip()]
+    if any(not link.lower().startswith(("https://", "http://")) for link in extra_links):
+        st.error("External file links must start with https:// or http://. No record changes were saved.")
+        return False, blob
+    if not removed and not files and not extra_links:
+        return True, blob
+    additions = []
+    for file in files or []:
+        item = upload_to_storage(file, school_year, semester)
+        if not item:
+            st.error("An upload failed. No record changes were saved; existing attachments are unchanged.")
+            return False, blob
+        additions.append(item)
+    kept = [item for index, item in enumerate(records) if index not in removed]
+    result = kept + additions + [{"url": link} for link in extra_links]
+    # Detach only explicitly selected links. Never delete objects from storage.
+    return True, json.dumps(result, ensure_ascii=False) if result else ""
+
+
 def admin_record_management(table,school_year,semester,columns,title="Manage Records",date_columns=None,select_options=None):
     if not can_edit(): return
     date_columns=set(date_columns or []); select_options=select_options or {}
+    attachment_columns = {"attachment", "attachments", "file_path"}
+    text_columns = {"notes", "results", "recommendations"}
     st.markdown("---"); st.subheader(f"⚙️ {title}")
     df=fetch_df(table,{"school_year":school_year,"semester":semester},order_by="id",descending=True)
     if df.empty: st.caption("No records available to manage."); return
-    options={}
+    labels={}
     for _,row in df.iterrows():
-        parts=[str(row.get(c,"")) for c in columns if row.get(c) is not None and str(row.get(c)).strip()]
-        options[" — ".join(parts) if parts else f"Record #{row['id']}"]=int(row["id"])
-    label=st.selectbox("Select a record",list(options),key=f"manage_select_{table}"); selected_id=options[label]; selected=df[df.id==selected_id].iloc[0]
-    with st.form(f"edit_form_{table}"):
-        edited={}
+        parts=[unpack_text_with_attachments(row.get(c,""))[0] for c in columns if c not in attachment_columns and row.get(c) is not None and str(row.get(c)).strip()]
+        labels[int(row["id"])]=f"#{row['id']} — " + " — ".join(parts)[:200]
+    selected_id=st.selectbox("Select a record",list(labels),format_func=lambda rid: labels[rid],key=f"manage_select_{table}")
+    selected=df[df.id==selected_id].iloc[0]
+    with st.form(f"edit_form_{table}_{selected_id}"):
+        edited={}; attachment_plans={}
         for col in columns:
             if col not in df.columns: continue
             lab=col.replace("_"," ").title(); value=selected[col]
-            if col in date_columns:
+            key=f"edit_{table}_{selected_id}_{col}"
+            if col in attachment_columns:
+                st.markdown(f"**{lab}**")
+                attachment_plans[col]=(False, edit_attachment_controls(value, key))
+            elif col in date_columns:
                 try: parsed=date.fromisoformat(str(value)) if value else date.today()
                 except ValueError: parsed=date.today()
-                edited[col]=st.date_input(lab,value=parsed,key=f"edit_{table}_{selected_id}_{col}").isoformat()
+                edited[col]=st.date_input(lab,value=parsed,key=key).isoformat()
             elif col in select_options:
                 opts=select_options[col]; cur=str(value) if value is not None else opts[0]
-                edited[col]=st.selectbox(lab,opts,index=opts.index(cur) if cur in opts else 0,key=f"edit_{table}_{selected_id}_{col}")
-            elif col in {"notes","results","recommendations"}:
+                edited[col]=st.selectbox(lab,opts,index=opts.index(cur) if cur in opts else 0,key=key)
+            elif col in text_columns:
                 clean_value, attachment_blob = unpack_text_with_attachments(value)
-                edited_text = st.text_area(lab, value=clean_value, key=f"edit_{table}_{selected_id}_{col}")
-                edited[col] = pack_text_with_attachments(edited_text, attachment_blob)
-            else: edited[col]=st.text_input(lab,value="" if value is None else str(value),key=f"edit_{table}_{selected_id}_{col}")
+                edited[col] = st.text_area(lab, value=clean_value, key=key)
+                # Standalone attachment columns have their own controls.
+                if attachment_blob or not attachment_columns.intersection(columns):
+                    attachment_plans[col]=(True, edit_attachment_controls(attachment_blob, key))
+            else:
+                edited[col]=st.text_input(lab,value="" if value is None else str(value),key=key)
         c1,c2=st.columns(2)
         with c1: save=st.form_submit_button("💾 Save Changes",use_container_width=True)
         with c2: delete=st.form_submit_button("🗑️ Delete Record",use_container_width=True)
-    if save and update_record(table,selected_id,edited): st.success("Changes saved successfully."); st.rerun()
+    if save:
+        for col, (embedded, plan) in attachment_plans.items():
+            ok, blob = save_attachment_edits(plan, school_year, semester)
+            if not ok: return
+            edited[col] = pack_text_with_attachments(edited[col], blob) if embedded else blob
+        if update_record(table,selected_id,edited):
+            st.success("Changes saved successfully.")
+            st.rerun()
     if delete and delete_record(table,selected_id): st.success("Record deleted successfully."); st.rerun()
 
 def main():
