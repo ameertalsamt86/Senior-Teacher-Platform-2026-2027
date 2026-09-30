@@ -1090,7 +1090,7 @@ def page_semester_plan(school_year, semester):
                     st.rerun()
 
     df = fetch_df("semester_events", {"school_year": school_year, "semester": semester},
-             "id, event_date, event_title, event_type, notes", "event_date", False).rename(columns={"event_date":"Date", "event_title":"Event / Activity / Occasion", "event_type":"Type", "notes":"Notes"})
+             "id, event_date, event_title, event_type, notes", "event_date", False)
 
     if df.empty:
         st.info("No events have been added to this semester yet.")
