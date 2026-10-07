@@ -128,9 +128,9 @@ div[data-testid="stVideo"] video {
 }
 .compact-attachment-video {
     display: block;
-    width: min(320px, 100%) !important;
-    height: 220px !important;
-    max-height: 220px !important;
+    width: min(600px, 100%) !important;
+    height: 410px !important;
+    max-height: 410px !important;
     margin: 0 auto;
     object-fit: contain;
     background: #111827;
@@ -144,9 +144,9 @@ div[data-testid="stVideo"] video {
         max-height: 175px !important;
     }
     .compact-attachment-video {
-        width: min(280px, 100%) !important;
-        height: 180px !important;
-        max-height: 180px !important;
+        width: min(520px, 100%) !important;
+        height: 330px !important;
+        max-height: 330px !important;
     }
 }
 div[data-testid="stVerticalBlockBorderWrapper"] {
@@ -428,7 +428,7 @@ def render_attachment_links(value, label="Attachments"):
                         safe_format = html.escape(video_format, quote=True)
                         st.markdown(
                             f"<video class='compact-attachment-video' controls playsinline preload='metadata' "
-                            f"width='320' height='220'><source src='{safe_url}' type='{safe_format}'>"
+                            f"width='600' height='410'><source src='{safe_url}' type='{safe_format}'>"
                             "Your browser cannot play this video. Use Open / Share below.</video>",
                             unsafe_allow_html=True,
                         )
