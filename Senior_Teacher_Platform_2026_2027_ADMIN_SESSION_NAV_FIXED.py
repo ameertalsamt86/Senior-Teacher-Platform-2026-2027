@@ -113,6 +113,26 @@ def apply_custom_style():
 .attachment-file-preview { min-height:190px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:1px solid #d8e1e8; background:#f8fafc; border-radius:0 0 14px 14px; color:#587087; text-align:center; }
 .attachment-big-icon { font-size:4rem; }
 .attachment-open { display:block; text-align:center; margin-top:8px; padding:9px 12px; border-radius:9px; background:#0B3C61; color:#fff !important; text-decoration:none !important; font-weight:700; }
+/* Keep video attachments compact on phones so the player does not create a tall card. */
+div[data-testid="stVideo"] {
+    width: 100% !important;
+    max-height: 240px !important;
+    overflow: hidden !important;
+    border-radius: 10px;
+}
+div[data-testid="stVideo"] video {
+    width: 100% !important;
+    max-height: 220px !important;
+    object-fit: contain !important;
+}
+@media (max-width: 900px) {
+    div[data-testid="stVideo"] {
+        max-height: 190px !important;
+    }
+    div[data-testid="stVideo"] video {
+        max-height: 175px !important;
+    }
+}
 div[data-testid="stVerticalBlockBorderWrapper"] {
     color: #173B5B !important;
 }
