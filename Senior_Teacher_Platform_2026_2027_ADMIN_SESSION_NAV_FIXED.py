@@ -6,6 +6,7 @@ import time
 import json
 import mimetypes
 import uuid
+import html
 import json
 import mimetypes
 import uuid
@@ -125,12 +126,27 @@ div[data-testid="stVideo"] video {
     max-height: 220px !important;
     object-fit: contain !important;
 }
+.compact-attachment-video {
+    display: block;
+    width: min(320px, 100%) !important;
+    height: 220px !important;
+    max-height: 220px !important;
+    margin: 0 auto;
+    object-fit: contain;
+    background: #111827;
+    border-radius: 10px;
+}
 @media (max-width: 900px) {
     div[data-testid="stVideo"] {
         max-height: 190px !important;
     }
     div[data-testid="stVideo"] video {
         max-height: 175px !important;
+    }
+    .compact-attachment-video {
+        width: min(280px, 100%) !important;
+        height: 180px !important;
+        max-height: 180px !important;
     }
 }
 div[data-testid="stVerticalBlockBorderWrapper"] {
@@ -408,7 +424,14 @@ def render_attachment_links(value, label="Attachments"):
                         st.image(url, use_container_width=True)
                     elif kind == "video":
                         video_format = mime_type if mime_type.startswith("video/") else _file_mime_type("video." + ext)
-                        st.video(url, format=video_format)
+                        safe_url = html.escape(url, quote=True)
+                        safe_format = html.escape(video_format, quote=True)
+                        st.markdown(
+                            f"<video class='compact-attachment-video' controls playsinline preload='metadata' "
+                            f"width='320' height='220'><source src='{safe_url}' type='{safe_format}'>"
+                            "Your browser cannot play this video. Use Open / Share below.</video>",
+                            unsafe_allow_html=True,
+                        )
                         st.caption("If playback is unavailable, use Open / Share below. For browser playback, use MP4 encoded with H.264.")
                     elif kind == "pdf":
                         st.markdown(f"<iframe src='{url}' width='100%' height='360' style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;'></iframe>", unsafe_allow_html=True)
