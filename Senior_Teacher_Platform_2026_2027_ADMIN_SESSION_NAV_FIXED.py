@@ -178,8 +178,21 @@ def delete_record(table, record_id):
     except Exception as exc: _db_error("delete this record", exc); return []
 
 def update_record(table, record_id, data):
-    try: return supabase.table(table).update(data).eq("id", record_id).execute().data or []
-    except Exception as exc: _db_error("update this record", exc); return []
+    """Confirm persisted values, including attachments, before reporting success."""
+    try:
+        supabase.table(table).update(data).eq("id", record_id).execute()
+        saved = supabase.table(table).select(",".join(["id"] + list(data))).eq("id", record_id).execute().data or []
+        if not saved:
+            st.error("The update could not be confirmed: the record is not readable. Check Supabase access policies for this table. Existing files have not been deleted.")
+            return []
+        row = saved[0]
+        if any(str(row.get(column) if row.get(column) is not None else "") != str(value if value is not None else "") for column, value in data.items()):
+            st.error("The changes were not confirmed in the database. Check update permissions in Supabase and try again. Existing attachments were not deleted.")
+            return []
+        return saved
+    except Exception as exc:
+        _db_error("update and verify this record", exc)
+        return []
 
 def fetch_df(table, filters=None, columns="*", order_by=None, descending=False):
     try:
@@ -1202,6 +1215,11 @@ def admin_record_management(table,school_year,semester,columns,title="Manage Rec
     attachment_columns = {"attachment", "attachments", "file_path"}
     text_columns = {"notes", "results", "recommendations"}
     st.markdown("---"); st.subheader(f"⚙️ {title}")
+    notice_key = f"attachment_save_notice_{table}"
+    notice = st.session_state.pop(notice_key, None)
+    if notice:
+        st.success(notice)
+    st.caption("Choose the record below, add your video under Add files / upload replacements, then click Save Changes at the bottom.")
     df=fetch_df(table,{"school_year":school_year,"semester":semester},order_by="id",descending=True)
     if df.empty: st.caption("No records available to manage."); return
     labels={}
@@ -1210,12 +1228,14 @@ def admin_record_management(table,school_year,semester,columns,title="Manage Rec
         labels[int(row["id"])]=f"#{row['id']} — " + " — ".join(parts)[:200]
     selected_id=st.selectbox("Select a record",list(labels),format_func=lambda rid: labels[rid],key=f"manage_select_{table}")
     selected=df[df.id==selected_id].iloc[0]
-    with st.form(f"edit_form_{table}_{selected_id}"):
+    revision_key = f"attachment_edit_revision_{table}_{selected_id}"
+    revision = st.session_state.get(revision_key, 0)
+    with st.form(f"edit_form_{table}_{selected_id}_{revision}"):
         edited={}; attachment_plans={}
         for col in columns:
             if col not in df.columns: continue
             lab=col.replace("_"," ").title(); value=selected[col]
-            key=f"edit_{table}_{selected_id}_{col}"
+            key=f"edit_{table}_{selected_id}_{col}_{revision}"
             if col in attachment_columns:
                 st.markdown(f"**{lab}**")
                 attachment_plans[col]=(False, edit_attachment_controls(value, key))
@@ -1238,12 +1258,15 @@ def admin_record_management(table,school_year,semester,columns,title="Manage Rec
         with c1: save=st.form_submit_button("💾 Save Changes",use_container_width=True)
         with c2: delete=st.form_submit_button("🗑️ Delete Record",use_container_width=True)
     if save:
-        for col, (embedded, plan) in attachment_plans.items():
-            ok, blob = save_attachment_edits(plan, school_year, semester)
-            if not ok: return
-            edited[col] = pack_text_with_attachments(edited[col], blob) if embedded else blob
-        if update_record(table,selected_id,edited):
-            st.success("Changes saved successfully.")
+        with st.spinner("Uploading attachments and confirming saved changes..."):
+            for col, (embedded, plan) in attachment_plans.items():
+                ok, blob = save_attachment_edits(plan, school_year, semester)
+                if not ok: return
+                edited[col] = pack_text_with_attachments(edited[col], blob) if embedded else blob
+            saved = update_record(table,selected_id,edited)
+        if saved:
+            st.session_state[revision_key] = revision + 1
+            st.session_state[notice_key] = f"Changes saved and verified for record #{selected_id}, including its attachments."
             st.rerun()
     if delete and delete_record(table,selected_id): st.success("Record deleted successfully."); st.rerun()
 
