@@ -441,7 +441,24 @@ def render_attachment_links(value, label="Attachments"):
                         )
                         st.caption("If playback is unavailable, use Open / Share below. For browser playback, use MP4 encoded with H.264.")
                     elif kind == "pdf":
-                        st.markdown(f"<iframe src='{url}' width='100%' height='360' style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;'></iframe>", unsafe_allow_html=True)
+                        safe_url = html.escape(url, quote=True)
+                        st.markdown(
+                            f"<iframe src='{safe_url}' width='100%' height='420' "
+                            "style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;'></iframe>",
+                            unsafe_allow_html=True,
+                        )
+                    elif kind == "office":
+                        # Microsoft Office Online can render public Word/Excel/PowerPoint files
+                        # directly inside the attachment card, so visitors do not need to download first.
+                        office_src = "https://view.officeapps.live.com/op/embed.aspx?src=" + quote(url, safe="")
+                        safe_office_src = html.escape(office_src, quote=True)
+                        st.markdown(
+                            f"<iframe src='{safe_office_src}' width='100%' height='520' "
+                            "style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;' "
+                            "allowfullscreen></iframe>",
+                            unsafe_allow_html=True,
+                        )
+                        st.caption("Document preview. If Microsoft Office Viewer cannot load the file, use Open / Share below.")
                     else:
                         st.markdown(f"<div class='attachment-file-preview'><div class='attachment-big-icon'>{icon}</div><div>{ext.upper() or 'FILE'}</div><small>File ready to open/share</small></div>", unsafe_allow_html=True)
                 except Exception:
