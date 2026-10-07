@@ -111,7 +111,10 @@ def apply_custom_style():
         
 .attachment-card { background:linear-gradient(135deg,#ffffff,#f6f9fb); border:1px solid #d8e1e8; border-radius:14px 14px 0 0; padding:12px 14px; box-shadow:0 2px 8px rgba(17,50,75,.07); }
 .attachment-card-title { font-weight:700; color:#123b59; word-break:break-word; }
-.attachment-file-preview { min-height:190px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:1px solid #d8e1e8; background:#f8fafc; border-radius:0 0 14px 14px; color:#587087; text-align:center; }
+.attachment-file-preview { width:100%; height:410px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:1px solid #d8e1e8; background:#f8fafc; border-radius:0 0 14px 14px; color:#587087; text-align:center; }
+.attachment-card + div[data-testid="stImage"] img,
+div[data-testid="stImage"] img { width:100% !important; height:410px !important; max-height:410px !important; object-fit:contain !important; background:#f8fafc; border-radius:10px; }
+div[data-testid="stMarkdownContainer"] iframe { width:100% !important; height:410px !important; max-height:410px !important; }
 .attachment-big-icon { font-size:4rem; }
 .attachment-open { display:block; text-align:center; margin-top:8px; padding:9px 12px; border-radius:9px; background:#0B3C61; color:#fff !important; text-decoration:none !important; font-weight:700; }
 /* Keep video attachments compact on phones so the player does not create a tall card. */
@@ -148,6 +151,10 @@ div[data-testid="stVideo"] video {
         height: 330px !important;
         max-height: 330px !important;
     }
+    .attachment-file-preview { height:330px; }
+    .attachment-card + div[data-testid="stImage"] img,
+    div[data-testid="stImage"] img { height:330px !important; max-height:330px !important; }
+    div[data-testid="stMarkdownContainer"] iframe { height:330px !important; max-height:330px !important; }
 }
 div[data-testid="stVerticalBlockBorderWrapper"] {
     color: #173B5B !important;
