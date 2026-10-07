@@ -256,6 +256,11 @@ def upload_to_storage(uploaded_file, school_year, semester):
         return {"url": str(public_url), "name": original_name, "mime": mime_type, "extension": ext.lstrip(".")}
     except Exception as exc:
         _db_error(f"upload '{getattr(uploaded_file, 'name', 'attachment')}'", exc)
+        error_text = str(exc).lower()
+        if any(term in error_text for term in ("413", "too large", "maximum allowed size", "exceeded", "payload too large")):
+            st.error("The file exceeds the storage upload limit. Use a smaller video or check the school-files bucket file-size limit in Supabase.")
+        elif "mime" in error_text or "content-type" in error_text:
+            st.error("Storage rejected this file type. Check the allowed MIME types for the school-files bucket in Supabase.")
         return None
 
 def upload_many_to_storage(uploaded_files, school_year, semester):
@@ -263,8 +268,10 @@ def upload_many_to_storage(uploaded_files, school_year, semester):
     records = []
     for uploaded_file in (uploaded_files or []):
         record = upload_to_storage(uploaded_file, school_year, semester)
-        if record:
-            records.append(record)
+        if not record:
+            st.error("The attachment upload failed. This record was not saved. Check the error above and try again; existing records are unchanged.")
+            st.stop()
+        records.append(record)
     return json.dumps(records, ensure_ascii=False) if records else ""
 
 def _attachment_type(url):
@@ -367,7 +374,9 @@ def render_attachment_links(value, label="Attachments"):
                     if kind == "image":
                         st.image(url, use_container_width=True)
                     elif kind == "video":
-                        st.video(url)
+                        video_format = mime_type if mime_type.startswith("video/") else _file_mime_type("video." + ext)
+                        st.video(url, format=video_format)
+                        st.caption("If playback is unavailable, use Open / Share below. For browser playback, use MP4 encoded with H.264.")
                     elif kind == "pdf":
                         st.markdown(f"<iframe src='{url}' width='100%' height='360' style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;'></iframe>", unsafe_allow_html=True)
                     else:
