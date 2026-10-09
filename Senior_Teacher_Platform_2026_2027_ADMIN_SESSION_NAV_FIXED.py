@@ -450,6 +450,16 @@ def render_attachment_links(value, label="Attachments"):
                         st.caption("If playback is unavailable, use Open / Share below. For browser playback, use MP4 encoded with H.264.")
                     elif kind == "pdf":
                         st.markdown(f"<iframe src='{url}' width='100%' height='360' style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;'></iframe>", unsafe_allow_html=True)
+                    elif kind == "office" and ext in {"doc", "docx"} and url.startswith(("http://", "https://")):
+                        preview_url = "https://view.officeapps.live.com/op/embed.aspx?src=" + quote(url, safe="")
+                        safe_preview_url = html.escape(preview_url, quote=True)
+                        st.markdown(
+                            f"<iframe src='{safe_preview_url}' title='Word preview' "
+                            "style='width:100%;height:410px;border:1px solid #d9e1e8;"
+                            "border-radius:12px;background:#fff;' loading='lazy'></iframe>",
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(f"<a href='{safe_preview_url}' target='_blank' rel='noopener noreferrer'>🔎 Open Word preview</a>", unsafe_allow_html=True)
                     else:
                         st.markdown(f"<div class='attachment-file-preview'><div class='attachment-big-icon'>{icon}</div><div>{ext.upper() or 'FILE'}</div><small>File ready to open/share</small></div>", unsafe_allow_html=True)
                 except Exception:
