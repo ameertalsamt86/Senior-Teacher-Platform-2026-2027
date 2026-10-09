@@ -111,6 +111,11 @@ def apply_custom_style():
         
 .attachment-card { background:linear-gradient(135deg,#ffffff,#f6f9fb); border:1px solid #d8e1e8; border-radius:14px 14px 0 0; padding:12px 14px; box-shadow:0 2px 8px rgba(17,50,75,.07); }
 .attachment-card-title { font-weight:700; color:#123b59; word-break:break-word; }
+.record-note-text, .record-note-text * {
+    color: #173B5B !important;
+    -webkit-text-fill-color: #173B5B !important;
+}
+.record-note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .attachment-file-preview { width:100%; height:410px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:1px solid #d8e1e8; background:#f8fafc; border-radius:0 0 14px 14px; color:#587087; text-align:center; }
 .attachment-card + div[data-testid="stImage"] img,
 div[data-testid="stImage"] img { width:100% !important; height:410px !important; max-height:410px !important; object-fit:contain !important; background:#f8fafc; border-radius:10px; }
@@ -395,7 +400,10 @@ def unpack_text_with_attachments(value):
 def render_text_and_attachments(value, label="Attachments"):
     clean_text, attachment_blob = unpack_text_with_attachments(value)
     if clean_text:
-        st.write(clean_text)
+        st.markdown(
+            f"<div class='record-note-text'>{html.escape(clean_text)}</div>",
+            unsafe_allow_html=True,
+        )
     render_attachment_links(attachment_blob, label)
 
 def render_attachment_links(value, label="Attachments"):
@@ -441,24 +449,7 @@ def render_attachment_links(value, label="Attachments"):
                         )
                         st.caption("If playback is unavailable, use Open / Share below. For browser playback, use MP4 encoded with H.264.")
                     elif kind == "pdf":
-                        safe_url = html.escape(url, quote=True)
-                        st.markdown(
-                            f"<iframe src='{safe_url}' width='100%' height='420' "
-                            "style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;'></iframe>",
-                            unsafe_allow_html=True,
-                        )
-                    elif kind == "office":
-                        # Microsoft Office Online can render public Word/Excel/PowerPoint files
-                        # directly inside the attachment card, so visitors do not need to download first.
-                        office_src = "https://view.officeapps.live.com/op/embed.aspx?src=" + quote(url, safe="")
-                        safe_office_src = html.escape(office_src, quote=True)
-                        st.markdown(
-                            f"<iframe src='{safe_office_src}' width='100%' height='520' "
-                            "style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;' "
-                            "allowfullscreen></iframe>",
-                            unsafe_allow_html=True,
-                        )
-                        st.caption("Document preview. If Microsoft Office Viewer cannot load the file, use Open / Share below.")
+                        st.markdown(f"<iframe src='{url}' width='100%' height='360' style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;'></iframe>", unsafe_allow_html=True)
                     else:
                         st.markdown(f"<div class='attachment-file-preview'><div class='attachment-big-icon'>{icon}</div><div>{ext.upper() or 'FILE'}</div><small>File ready to open/share</small></div>", unsafe_allow_html=True)
                 except Exception:
