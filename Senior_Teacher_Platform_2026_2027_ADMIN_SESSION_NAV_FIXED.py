@@ -1004,8 +1004,9 @@ export default function(component) {
 
 
 @st.cache_resource
-def _planning_component():
-    return st.components.v2.component("expanding_planning_grid", html='<div class="planning-grid"></div>',
+def _planning_component(assets_version):
+    # Invalidate both cached registration and browser assets when CSS/JS changes.
+    return st.components.v2.component(f"expanding_planning_grid_{assets_version}", html='<div class="planning-grid"></div>',
                                       css=PLANNING_GRID_CSS, js=PLANNING_GRID_JS)
 
 
@@ -1033,7 +1034,8 @@ def render_planning_table(page, school_year, semester):
             st.error("The planning table could not be loaded. Try again later; saved data has not been changed.")
             return
         version = f"{revision or 'new'}_{st.session_state.get(f'planning_reload_version_{scope}', '')}_{editable}"
-        result = _planning_component()(
+        assets_version = hashlib.sha256((PLANNING_GRID_CSS + PLANNING_GRID_JS).encode("utf-8")).hexdigest()[:12]
+        result = _planning_component(assets_version)(
             data={"columns": PLANNING_TABLE_COLUMNS[page], "rows": rows,
                   "editable": editable, "version": version},
             key=f"planning_grid_{scope}_{hashlib.sha256(version.encode()).hexdigest()}", on_save_change=lambda: None,
