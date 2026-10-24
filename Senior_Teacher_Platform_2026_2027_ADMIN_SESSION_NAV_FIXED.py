@@ -13,6 +13,7 @@ import uuid
 from pathlib import PurePosixPath
 from urllib.parse import quote
 
+import httpx
 import pandas as pd
 import streamlit as st
 
@@ -111,11 +112,6 @@ def apply_custom_style():
         
 .attachment-card { background:linear-gradient(135deg,#ffffff,#f6f9fb); border:1px solid #d8e1e8; border-radius:14px 14px 0 0; padding:12px 14px; box-shadow:0 2px 8px rgba(17,50,75,.07); }
 .attachment-card-title { font-weight:700; color:#123b59; word-break:break-word; }
-.record-note-text, .record-note-text * {
-    color: #173B5B !important;
-    -webkit-text-fill-color: #173B5B !important;
-}
-.record-note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .attachment-file-preview { width:100%; height:410px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; border:1px solid #d8e1e8; background:#f8fafc; border-radius:0 0 14px 14px; color:#587087; text-align:center; }
 .attachment-card + div[data-testid="stImage"] img,
 div[data-testid="stImage"] img { width:100% !important; height:410px !important; max-height:410px !important; object-fit:contain !important; background:#f8fafc; border-radius:10px; }
@@ -400,11 +396,42 @@ def unpack_text_with_attachments(value):
 def render_text_and_attachments(value, label="Attachments"):
     clean_text, attachment_blob = unpack_text_with_attachments(value)
     if clean_text:
-        st.markdown(
-            f"<div class='record-note-text'>{html.escape(clean_text)}</div>",
-            unsafe_allow_html=True,
-        )
+        st.write(clean_text)
     render_attachment_links(attachment_blob, label)
+
+@st.cache_data(ttl=300, max_entries=4, show_spinner=False)
+def _load_pdf_preview(url):
+    """Serve PDF bytes through Streamlit; avoid remote iframe/CORS restrictions."""
+    if not str(url).lower().startswith(("https://", "http://")):
+        raise ValueError("A public HTTP(S) PDF link is required.")
+    # Bound preview memory use; the original file remains available via Open / Share.
+    limit = 50 * 1024 * 1024
+    data = bytearray()
+    with httpx.stream("GET", url, follow_redirects=True, timeout=30.0) as response:
+        response.raise_for_status()
+        for chunk in response.iter_bytes():
+            data.extend(chunk)
+            if len(data) > limit:
+                raise ValueError("This PDF exceeds the 50 MB inline preview limit. Use Open / Share below.")
+    if b"%PDF-" not in data[:1024]:
+        raise ValueError("The link did not return a PDF document.")
+    return bytes(data)
+
+
+def render_pdf_preview(url):
+    try:
+        with st.spinner("Loading PDF preview..."):
+            data = _load_pdf_preview(url)
+        # PDF.js displays pages without the browser's embedded PDF plug-in.
+        # The same attachment may appear in a record and its edit form.
+        # Give each viewer a stable, distinct key within this page render.
+        preview_number = st.session_state.get("_pdf_preview_count", 0)
+        st.session_state["_pdf_preview_count"] = preview_number + 1
+        st.pdf(data, height=410, key=f"attachment_pdf_{preview_number}")
+    except (httpx.HTTPError, ValueError) as exc:
+        st.info("PDF preview could not be loaded. You can still use Open / Share below.")
+        st.caption(str(exc))
+
 
 def render_attachment_links(value, label="Attachments"):
     """Show attachments as visible cards, with previews for images/videos/PDFs."""
@@ -449,17 +476,19 @@ def render_attachment_links(value, label="Attachments"):
                         )
                         st.caption("If playback is unavailable, use Open / Share below. For browser playback, use MP4 encoded with H.264.")
                     elif kind == "pdf":
-                        st.markdown(f"<iframe src='{url}' width='100%' height='360' style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;'></iframe>", unsafe_allow_html=True)
-                    elif kind == "office" and ext in {"doc", "docx"} and url.startswith(("http://", "https://")):
-                        preview_url = "https://view.officeapps.live.com/op/embed.aspx?src=" + quote(url, safe="")
-                        safe_preview_url = html.escape(preview_url, quote=True)
+                        render_pdf_preview(url)
+                    elif kind == "office":
+                        # Microsoft Office Online can render public Word/Excel/PowerPoint files
+                        # directly inside the attachment card, so visitors do not need to download first.
+                        office_src = "https://view.officeapps.live.com/op/embed.aspx?src=" + quote(url, safe="")
+                        safe_office_src = html.escape(office_src, quote=True)
                         st.markdown(
-                            f"<iframe src='{safe_preview_url}' title='Word preview' "
-                            "style='width:100%;height:410px;border:1px solid #d9e1e8;"
-                            "border-radius:12px;background:#fff;' loading='lazy'></iframe>",
+                            f"<iframe src='{safe_office_src}' width='100%' height='520' "
+                            "style='border:1px solid #d9e1e8;border-radius:12px;background:#fff;' "
+                            "allowfullscreen></iframe>",
                             unsafe_allow_html=True,
                         )
-                        st.markdown(f"<a href='{safe_preview_url}' target='_blank' rel='noopener noreferrer'>🔎 Open Word preview</a>", unsafe_allow_html=True)
+                        st.caption("Document preview. If Microsoft Office Viewer cannot load the file, use Open / Share below.")
                     else:
                         st.markdown(f"<div class='attachment-file-preview'><div class='attachment-big-icon'>{icon}</div><div>{ext.upper() or 'FILE'}</div><small>File ready to open/share</small></div>", unsafe_allow_html=True)
                 except Exception:
@@ -1339,6 +1368,7 @@ def admin_record_management(table,school_year,semester,columns,title="Manage Rec
     if delete and delete_record(table,selected_id): st.success("Record deleted successfully."); st.rerun()
 
 def main():
+    st.session_state["_pdf_preview_count"] = 0
     apply_custom_style(); init_db()
     page=get_current_page()
     render_header()
