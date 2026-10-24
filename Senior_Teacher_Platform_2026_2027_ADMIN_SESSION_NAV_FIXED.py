@@ -890,6 +890,125 @@ def _save_planning_table(page, school_year, semester, frame, base_revision):
     return rows, revision
 
 
+PLANNING_GRID_CSS = """
+.planning-grid { color:var(--st-text-color,#173b5b); font:14px/1.55 sans-serif; }
+.planning-scroll { width:100%; overflow-x:auto; border:1px solid #bbcbd9; border-radius:10px; }
+.planning-grid table { width:100%; min-width:550px; table-layout:fixed; border-collapse:collapse; }
+.planning-grid th { background:var(--st-secondary-background-color,#eef3f8); text-align:left; padding:12px; }
+.planning-grid td { padding:6px; vertical-align:top; border-top:1px solid #bbcbd9; border-right:1px solid #bbcbd9; }
+.planning-grid .cell-text { padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; word-break:normal; }
+.planning-grid textarea { display:block; box-sizing:border-box; width:100%; min-height:44px; padding:8px;
+  color:inherit; background:transparent; border:1px solid transparent; border-radius:5px; font:inherit;
+  white-space:pre-wrap; overflow-wrap:anywhere; overflow:hidden; resize:none; }
+.planning-grid textarea:focus { outline:2px solid #3d89b8; background:var(--st-background-color,#fff); }
+.planning-grid input[type=date] { box-sizing:border-box; width:100%; min-height:44px; padding:5px;
+  color:inherit; background:transparent; border:1px solid #bbcbd9; border-radius:5px; font:inherit; }
+.planning-grid button { cursor:pointer; padding:8px 14px; border:1px solid #8fa9bd; border-radius:7px;
+  font:inherit; color:inherit; background:var(--st-background-color,#fff); }
+.planning-grid .planning-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+.planning-grid .save-table { background:#0b3c61; color:#fff; border-color:#0b3c61; }
+.planning-grid .remove-row { padding:7px; font-size:18px; }
+"""
+
+PLANNING_GRID_JS = r"""
+export default function(component) {
+  const {parentElement, data, setTriggerValue} = component;
+  const host = parentElement.querySelector('.planning-grid');
+  // Keep the live draft and caret when unrelated widgets rerun Python.
+  if (host.dataset.version !== data.version) {
+    host.dataset.version = data.version;
+    host.replaceChildren();
+    const rows = data.rows.map(row => ({...row}));
+    const scroll = document.createElement('div'); scroll.className = 'planning-scroll';
+    const table = document.createElement('table'); table.setAttribute('aria-label', 'Planning Table');
+    const head = table.createTHead().insertRow();
+    const body = table.createTBody();
+    data.columns.forEach((column, index) => {
+      const th = document.createElement('th'); th.textContent = column; th.scope = 'col';
+      if (column === 'Date') th.style.width = '145px';
+      else if (index === 0 && data.columns.length === 3) th.style.width = '45%';
+      head.appendChild(th);
+    });
+    if (data.editable) {
+      const th = document.createElement('th'); th.textContent = ''; th.style.width = '42px';
+      head.appendChild(th);
+    }
+    function resize(field) {
+      field.style.height = '0px';
+      field.style.height = Math.max(44, field.scrollHeight + 2) + 'px';
+    }
+    function renderRows() {
+      body.replaceChildren();
+      rows.forEach((row, index) => {
+        const tr = body.insertRow();
+        data.columns.forEach(column => {
+          const td = tr.insertCell();
+          if (!data.editable) {
+            const text = document.createElement('div'); text.className = 'cell-text';
+            const value = row[column] || '';
+            text.textContent = column === 'Date' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+              ? value.split('-').reverse().join('/') : value;
+            text.dir = 'auto'; td.appendChild(text); return;
+          }
+          const field = document.createElement(column === 'Date' ? 'input' : 'textarea');
+          if (column === 'Date') field.type = 'date'; else field.rows = 1;
+          field.value = row[column] || ''; field.dir = 'auto';
+          field.setAttribute('aria-label', `${column}, row ${index + 1}`);
+          field.addEventListener('input', () => {
+            row[column] = field.value || null;
+            if (column !== 'Date') resize(field);
+          });
+          td.appendChild(field);
+        });
+        if (data.editable) {
+          const remove = document.createElement('button'); remove.type = 'button';
+          remove.textContent = '×'; remove.className = 'remove-row';
+          remove.setAttribute('aria-label', `Remove row ${index + 1}`);
+          remove.addEventListener('click', () => {rows.splice(index, 1); renderRows();});
+          tr.insertCell().appendChild(remove);
+        }
+      });
+      requestAnimationFrame(() => body.querySelectorAll('textarea').forEach(resize));
+    }
+    scroll.appendChild(table); host.appendChild(scroll);
+    if (data.editable) {
+      const actions = document.createElement('div'); actions.className = 'planning-actions';
+      const add = document.createElement('button'); add.type = 'button'; add.textContent = '+ Add Row';
+      add.addEventListener('click', () => {
+        rows.push(Object.fromEntries(data.columns.map(c => [c, null]))); renderRows();
+        requestAnimationFrame(() => body.lastElementChild?.querySelector('textarea,input')?.focus());
+      });
+      const save = document.createElement('button'); save.type = 'button';
+      save.textContent = 'Save Table'; save.className = 'save-table';
+      save.addEventListener('click', () => {
+        // Send every cell together; the currently focused textarea is included.
+        setTriggerValue('save', {rows: rows.map(row => ({...row}))});
+      });
+      actions.append(add, save); host.appendChild(actions);
+    }
+    renderRows();
+  }
+  let lastWidth = 0;
+  const observer = new ResizeObserver(entries => {
+    const width = entries[0].contentRect.width;
+    if (Math.abs(width - lastWidth) < 1) return;
+    lastWidth = width;
+    host.querySelectorAll('textarea').forEach(field => {
+      field.style.height = '0px'; field.style.height = Math.max(44, field.scrollHeight + 2) + 'px';
+    });
+  });
+  observer.observe(host);
+  return () => observer.disconnect();
+}
+"""
+
+
+@st.cache_resource
+def _planning_component():
+    return st.components.v2.component("expanding_planning_grid", html='<div class="planning-grid"></div>',
+                                      css=PLANNING_GRID_CSS, js=PLANNING_GRID_JS)
+
+
 def render_planning_table(page, school_year, semester):
     scope = _planning_folder(page, school_year, semester).rsplit("/", 1)[-1]
     state_key = f"planning_state_{scope}"
@@ -897,9 +1016,10 @@ def render_planning_table(page, school_year, semester):
     with st.container(border=True):
         st.markdown("### Planning Table")
         if editable:
-            st.caption("Add rows using the + row at the bottom. Click Save Table to keep your changes.")
+            st.caption("Text wraps and rows expand as you type. Use + Add Row, then Save Table to keep your changes.")
             if st.button("Reload saved table", key=f"planning_reload_{scope}"):
                 st.session_state.pop(state_key, None)
+                st.session_state[f"planning_reload_version_{scope}"] = uuid.uuid4().hex
         try:
             if editable and state_key in st.session_state:
                 saved = st.session_state[state_key]
@@ -912,21 +1032,16 @@ def render_planning_table(page, school_year, semester):
         except Exception:
             st.error("The planning table could not be loaded. Try again later; saved data has not been changed.")
             return
-        column_config = {
-            column: (st.column_config.DateColumn(column, format="DD/MM/YYYY") if column == "Date"
-                     else st.column_config.TextColumn(column))
-            for column in PLANNING_TABLE_COLUMNS[page]
-        }
-        if not editable:
-            st.dataframe(frame, hide_index=True, width="stretch", column_config=column_config)
-            return
-        editor_key = f"planning_editor_{scope}_{revision or 'new'}"
-        with st.form(f"planning_form_{scope}", clear_on_submit=False):
-            edited = st.data_editor(frame, num_rows="dynamic", hide_index=True,
-                                    width="stretch", column_config=column_config, key=editor_key)
-            save = st.form_submit_button("Save Table", type="primary")
-        if save:
+        version = f"{revision or 'new'}_{st.session_state.get(f'planning_reload_version_{scope}', '')}_{editable}"
+        result = _planning_component()(
+            data={"columns": PLANNING_TABLE_COLUMNS[page], "rows": rows,
+                  "editable": editable, "version": version},
+            key=f"planning_grid_{scope}_{hashlib.sha256(version.encode()).hexdigest()}", on_save_change=lambda: None,
+        )
+        submission = result.save
+        if editable and submission is not None:
             try:
+                edited = pd.DataFrame(submission["rows"], columns=PLANNING_TABLE_COLUMNS[page])
                 rows, revision = _save_planning_table(page, school_year, semester, edited, revision)
             except Exception as exc:
                 st.error(f"The table was not confirmed saved. Your entries are still in the editor. {exc}")
