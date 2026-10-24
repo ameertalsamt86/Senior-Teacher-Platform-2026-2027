@@ -1,3 +1,7 @@
+streamlit[pdf]>=1.56.0
+pandas
+supabase
+httpx
 streamlit
 pandas
 supabase
