@@ -805,8 +805,142 @@ def page_home(school_year, semester):
     st.markdown(f'<img class="footer-art" src="data:image/png;base64,{FOOTER_ART_B64}">',unsafe_allow_html=True)
     render_platform_comments(school_year, semester)
 
+# Shared planning grids; each save is an immutable snapshot in existing storage.
+PLANNING_TABLE_COLUMNS = {
+    "semester_plan": ["Event", "Date", "Implementer"],
+    "demo_lessons": ["Event", "Date", "Implementer"],
+    "supervisory_visits": ["Teacher", "Date"],
+    "professional_development": ["Program", "Date", "Implementer"],
+    "peer_visits": ["Observer", "Observee", "Class", "Date"],
+    "educational_initiatives": ["Initiative", "Date", "Idea"],
+    "plc": ["Event", "Date"],
+}
+
+
+def _planning_folder(page, school_year, semester):
+    if page not in PLANNING_TABLE_COLUMNS:
+        raise ValueError("Unknown planning table.")
+    scope = json.dumps([page, school_year, semester], ensure_ascii=False)
+    return "planning-tables/" + hashlib.sha256(scope.encode("utf-8")).hexdigest()
+
+
+def _read_planning_table(page, school_year, semester):
+    folder = _planning_folder(page, school_year, semester)
+    bucket = supabase.storage.from_("school-files")
+    snapshots = bucket.list(folder, {"limit": 1, "sortBy": {"column": "name", "order": "desc"}})
+    if not snapshots:
+        return [], None
+    revision = snapshots[0]["name"]
+    document = json.loads(bucket.download(f"{folder}/{revision}"))
+    if (document.get("schema_version") != 1 or document.get("page") != page
+            or document.get("school_year") != school_year or document.get("semester") != semester
+            or not isinstance(document.get("rows"), list)):
+        raise ValueError("The saved table could not be read safely. No data was changed.")
+    rows = document["rows"]
+    if any(not isinstance(row, dict) or set(row) != set(PLANNING_TABLE_COLUMNS[page]) for row in rows):
+        raise ValueError("The saved table has unexpected columns. No data was changed.")
+    return rows, revision
+
+
+def _planning_frame(page, rows):
+    frame = pd.DataFrame(rows, columns=PLANNING_TABLE_COLUMNS[page])
+    for column in frame:
+        if column == "Date":
+            frame[column] = pd.to_datetime(frame[column], errors="raise").dt.date
+        else:
+            frame[column] = frame[column].astype("string")
+    return frame
+
+
+def _planning_rows(page, frame):
+    rows = []
+    for record in frame.to_dict("records"):
+        row = {}
+        for column in PLANNING_TABLE_COLUMNS[page]:
+            value = record.get(column)
+            if value is None or pd.isna(value) or str(value).strip() == "":
+                row[column] = None
+            elif column == "Date":
+                row[column] = date.fromisoformat(str(value)[:10]).isoformat()
+            else:
+                row[column] = str(value).strip()
+        if any(value is not None for value in row.values()):
+            rows.append(row)
+    return rows
+
+
+def _save_planning_table(page, school_year, semester, frame, base_revision):
+    if not can_edit():
+        raise PermissionError("Administrator access is required to save a table.")
+    rows = _planning_rows(page, frame)
+    _, latest_revision = _read_planning_table(page, school_year, semester)
+    if latest_revision != base_revision:
+        raise ValueError("This table was updated elsewhere. Copy your changes, reload the saved table, then apply them again.")
+    revision = f"{time.time_ns():020d}_{uuid.uuid4().hex}.json"
+    document = {"schema_version": 1, "page": page, "school_year": school_year,
+                "semester": semester, "rows": rows, "previous_revision": base_revision}
+    payload = json.dumps(document, ensure_ascii=False).encode("utf-8")
+    folder = _planning_folder(page, school_year, semester)
+    bucket = supabase.storage.from_("school-files")
+    # Never replace an old snapshot, attachment, or existing database record.
+    bucket.upload(f"{folder}/{revision}", payload,
+                  {"content-type": "application/json", "upsert": "false", "cache-control": "0"})
+    if bucket.download(f"{folder}/{revision}") != payload:
+        raise ValueError("The saved table could not be verified. Your editor entries are still available.")
+    return rows, revision
+
+
+def render_planning_table(page, school_year, semester):
+    scope = _planning_folder(page, school_year, semester).rsplit("/", 1)[-1]
+    state_key = f"planning_state_{scope}"
+    editable = can_edit()
+    with st.container(border=True):
+        st.markdown("### Planning Table")
+        if editable:
+            st.caption("Add rows using the + row at the bottom. Click Save Table to keep your changes.")
+            if st.button("Reload saved table", key=f"planning_reload_{scope}"):
+                st.session_state.pop(state_key, None)
+        try:
+            if editable and state_key in st.session_state:
+                saved = st.session_state[state_key]
+                rows, revision = saved["rows"], saved["revision"]
+            else:
+                rows, revision = _read_planning_table(page, school_year, semester)
+                if editable:
+                    st.session_state[state_key] = {"rows": rows, "revision": revision}
+            frame = _planning_frame(page, rows)
+        except Exception:
+            st.error("The planning table could not be loaded. Try again later; saved data has not been changed.")
+            return
+        column_config = {
+            column: (st.column_config.DateColumn(column, format="DD/MM/YYYY") if column == "Date"
+                     else st.column_config.TextColumn(column))
+            for column in PLANNING_TABLE_COLUMNS[page]
+        }
+        if not editable:
+            st.dataframe(frame, hide_index=True, width="stretch", column_config=column_config)
+            return
+        editor_key = f"planning_editor_{scope}_{revision or 'new'}"
+        with st.form(f"planning_form_{scope}", clear_on_submit=False):
+            edited = st.data_editor(frame, num_rows="dynamic", hide_index=True,
+                                    width="stretch", column_config=column_config, key=editor_key)
+            save = st.form_submit_button("Save Table", type="primary")
+        if save:
+            try:
+                rows, revision = _save_planning_table(page, school_year, semester, edited, revision)
+            except Exception as exc:
+                st.error(f"The table was not confirmed saved. Your entries are still in the editor. {exc}")
+                return
+            st.session_state[state_key] = {"rows": rows, "revision": revision}
+            st.session_state[f"planning_success_{scope}"] = True
+            st.rerun()
+        if st.session_state.pop(f"planning_success_{scope}", False):
+            st.success("Table saved successfully.")
+
+
 def page_demo_lessons(school_year, semester):
     st.subheader("Demo Lessons")
+    render_planning_table("demo_lessons", school_year, semester)
     if can_edit():
         with st.form("demo_lessons_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -848,6 +982,7 @@ def page_demo_lessons(school_year, semester):
 
 def page_supervisory_visits(school_year, semester):
     st.subheader("Supervisory Visits")
+    render_planning_table("supervisory_visits", school_year, semester)
     if can_edit():
         with st.form("supervisory_visits_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -886,6 +1021,7 @@ def page_supervisory_visits(school_year, semester):
 
 def page_professional_development(school_year, semester):
     st.subheader("Professional Development")
+    render_planning_table("professional_development", school_year, semester)
     if can_edit():
         with st.form("professional_development_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -924,6 +1060,7 @@ def page_professional_development(school_year, semester):
 
 def page_peer_visits(school_year, semester):
     st.subheader("Peer Visits")
+    render_planning_table("peer_visits", school_year, semester)
 
     if can_edit():
         with st.form("peer_visits_form", clear_on_submit=True):
@@ -975,6 +1112,7 @@ def page_peer_visits(school_year, semester):
 
 def page_educational_initiatives(school_year, semester):
     st.subheader("Educational Initiatives")
+    render_planning_table("educational_initiatives", school_year, semester)
     if can_edit():
         with st.form("educational_initiatives_form", clear_on_submit=True):
             initiative_title = st.text_input("Initiative Title")
@@ -1012,6 +1150,7 @@ def page_educational_initiatives(school_year, semester):
 
 def page_plc(school_year, semester):
     st.subheader("Professional Learning Community")
+    render_planning_table("plc", school_year, semester)
 
     if can_edit():
         with st.form("plc_form", clear_on_submit=True):
@@ -1112,6 +1251,7 @@ def page_files(school_year, semester):
 
 def page_semester_plan(school_year, semester):
     st.subheader("Semester Plan")
+    render_planning_table("semester_plan", school_year, semester)
     st.caption(f"{school_year} · {semester}")
 
     settings = fetch_df("semester_settings", {"school_year": school_year, "semester": semester}, "start_date, end_date", "id", True)
