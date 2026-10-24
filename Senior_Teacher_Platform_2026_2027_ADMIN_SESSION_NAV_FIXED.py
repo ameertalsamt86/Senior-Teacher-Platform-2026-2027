@@ -891,22 +891,22 @@ def _save_planning_table(page, school_year, semester, frame, base_revision):
 
 
 PLANNING_GRID_CSS = """
-.planning-grid { color:var(--st-text-color,#173b5b); font:14px/1.55 sans-serif; }
+.planning-grid { color:#173b5b; background:#fff; color-scheme:light; font:14px/1.55 sans-serif; }
 .planning-scroll { width:100%; overflow-x:auto; border:1px solid #bbcbd9; border-radius:10px; }
 .planning-grid table { width:100%; min-width:550px; table-layout:fixed; border-collapse:collapse; }
-.planning-grid th { background:var(--st-secondary-background-color,#eef3f8); text-align:left; padding:12px; }
-.planning-grid td { padding:6px; vertical-align:top; border-top:1px solid #bbcbd9; border-right:1px solid #bbcbd9; }
-.planning-grid .cell-text { padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; word-break:normal; }
+.planning-grid th { background:#0b3c61 !important; color:#fff !important; -webkit-text-fill-color:#fff !important; text-align:left; padding:12px; }
+.planning-grid td { background:#fff; color:#173b5b; padding:6px; vertical-align:top; border-top:1px solid #bbcbd9; border-right:1px solid #bbcbd9; }
+.planning-grid .cell-text { color:#173b5b !important; -webkit-text-fill-color:#173b5b !important; padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; word-break:normal; }
 .planning-grid textarea { display:block; box-sizing:border-box; width:100%; min-height:44px; padding:8px;
-  color:inherit; background:transparent; border:1px solid transparent; border-radius:5px; font:inherit;
+  color:#173b5b !important; -webkit-text-fill-color:#173b5b !important; background:#fff; border:1px solid transparent; border-radius:5px; font:inherit;
   white-space:pre-wrap; overflow-wrap:anywhere; overflow:hidden; resize:none; }
-.planning-grid textarea:focus { outline:2px solid #3d89b8; background:var(--st-background-color,#fff); }
+.planning-grid textarea:focus { outline:2px solid #3d89b8; background:#fff; }
 .planning-grid input[type=date] { box-sizing:border-box; width:100%; min-height:44px; padding:5px;
-  color:inherit; background:transparent; border:1px solid #bbcbd9; border-radius:5px; font:inherit; }
+  color:#173b5b !important; -webkit-text-fill-color:#173b5b !important; background:#fff; border:1px solid #bbcbd9; border-radius:5px; font:inherit; }
 .planning-grid button { cursor:pointer; padding:8px 14px; border:1px solid #8fa9bd; border-radius:7px;
-  font:inherit; color:inherit; background:var(--st-background-color,#fff); }
+  font:inherit; color:#173b5b !important; -webkit-text-fill-color:#173b5b !important; background:#fff; }
 .planning-grid .planning-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
-.planning-grid .save-table { background:#0b3c61; color:#fff; border-color:#0b3c61; }
+.planning-grid .save-table { background:#0b3c61; color:#fff !important; -webkit-text-fill-color:#fff !important; border-color:#0b3c61; }
 .planning-grid .remove-row { padding:7px; font-size:18px; }
 """
 
